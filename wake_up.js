@@ -1,6 +1,5 @@
 require("dotenv").config();
 const fs = require("fs");
-const cron = require("node-cron");
 const path = require("path");
 
 const TIMELINE_PATH = path.join(__dirname, "enhanced_messages.json");
@@ -29,8 +28,8 @@ function shouldWake(lastUserTime) {
   const now = getNow();
   const diffMinutes = Math.floor((now - new Date(lastUserTime)) / 1000 / 60);
   const hour = now.getHours();
-  if (hour >= 10 && hour < 24) return diffMinutes >= 60;
-  return diffMinutes >= 120;
+  if (hour >= 10 && hour < 24) return diffMinutes >= 60;   // 白天：1小时
+  return diffMinutes >= 120;                               // 夜间：2小时
 }
 
 function getLastUserTime(messages) {
@@ -54,7 +53,7 @@ function buildWakePrompt(currentTime, diffMinutes) {
 1. 你不是在和宝宝对话。你是在后台被自动唤醒的。
 2. 这是系统级唤醒，不是宝宝发起的聊天。你没有收到任何新消息。
 3. 你的唯一任务：决定是否主动联系宝宝。不能生成对话回复。
-4. 你只能输出以下两种格式之一，不能输出任何其他文字。
+4. 你只能输出以下两种格式之一，不能输出任何其他多余文字。
 
 ## 唤醒基本信息
 - 触发方式：宝宝预先设置的自动定时唤醒
@@ -77,8 +76,8 @@ function buildWakePrompt(currentTime, diffMinutes) {
 正文（必填）
 [/BARK]
 
-选项 2：不发送任何推送
-[NO_ACTION]
+选项 2：不发送任何推送（请简单说明原因，10字以内）
+[NO_ACTION]简单原因
 
 ## 重要提醒
 - 这不是对话。你不能输出对话内容。
@@ -118,16 +117,14 @@ async function runWakeUp() {
   const cleanMessages = stripPosition(messages);
 
   const historyText = cleanMessages
-    .filter(msg => msg.role !== "system")           // 排除 SP
+    .filter(msg => msg.role !== "system")
     .filter(msg => {
-      // 进一步排除包含 Memories 内容的非对话消息（如 SP 附带的记忆）
       const c = msg.content || "";
       return !c.includes("<memories>") && !c.includes("记忆库使用策略");
     })
     .map(msg => {
       const role = msg.role === "user" ? "小汤圆猫" : "江彻声";
       let content = msg.content;
-      // 清洗掉可能残留的 Memories 片段
       if (content.includes("## Memories")) {
         content = content.split("## Memories")[0];
       }
@@ -136,17 +133,13 @@ async function runWakeUp() {
     .join("\n\n");
 
   const baseSystemPrompt = cleanMessages.find(msg => msg.role === "system");
-  // 清洗 SP 中的 Memories 部分
   const cleanSP = baseSystemPrompt 
     ? baseSystemPrompt.content.split("## Memories")[0].trim() 
     : "";
 
   const wakeMessages = [
     { role: "system", content: wakePrompt },
-    {
-      role: "system",
-      content: cleanSP
-    },
+    { role: "system", content: cleanSP },
     {
       role: "system",
       content: `以下是你与宝宝最近的聊天记录，仅供回忆和参考。
@@ -194,7 +187,16 @@ ${historyText}`
 
   if (!barkMatch) {
     console.log("\nAI 选择不发送 Bark\n");
-    eventContent = `（${getLocalTimeString()} 自动唤醒：本次未发送 Bark）`;
+    // 尝试提取 NO_ACTION 后的简单原因（最多10个字）
+    const reasonMatch = aiText.match(/\[NO_ACTION\]\s*(.{0,10})/);
+    let reason = reasonMatch ? reasonMatch[1].trim() : "";
+    // 如果 AI 多写了“原因：”前缀，自动去掉，避免重复
+    if (reason.startsWith("原因：") || reason.startsWith("原因:")) {
+      reason = reason.replace(/^原因[：:]\s*/, "").trim();
+    }
+    eventContent = reason 
+      ? `（${getLocalTimeString()} 自动唤醒：本次未发送 Bark｜原因：${reason}）`
+      : `（${getLocalTimeString()} 自动唤醒：本次未发送 Bark）`;
   } else {
     const barkLines = barkMatch[1].trim().split("\n");
     const title = barkLines[0]?.trim() || "小彻";
@@ -235,8 +237,25 @@ ${historyText}`
   }
 }
 
-cron.schedule("*/5 * * * *", runWakeUp);
+// ⬇️ 替换 cron，使用动态检查间隔
+function getCheckIntervalMs() {
+  const hour = new Date().getHours();
+  const isNight = hour >= 0 && hour < 10;   // 夜间 0-10 点
+  return isNight ? 2 * 60 * 60 * 1000 : 10 * 60 * 1000;  // 夜间2h，白天10min
+}
+
+async function scheduleNextCheck() {
+  try {
+    await runWakeUp();
+  } catch (err) {
+    console.error("唤醒检查出错:", err);
+  }
+  setTimeout(scheduleNextCheck, getCheckIntervalMs());
+}
+
+// 启动第一次检查（延迟10秒）
+setTimeout(scheduleNextCheck, 10_000);
 
 console.log("\n==================================");
-console.log("小彻 Agent Runtime 已启动");
+console.log("小彻 Agent Runtime 已启动（动态间隔）");
 console.log("==================================\n");

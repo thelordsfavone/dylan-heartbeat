@@ -1,3 +1,4 @@
+require("./wake_up.js");
 require("dotenv").config();
 
 const Fastify = require("fastify");

@@ -288,8 +288,19 @@ function buildTimeline(kelivoMessages, tsDB) {
   });
 
   const result = [];
-  if (latestSP) result.push({ ...latestSP, position: 0 });
-  else if (oldSP) result.push({ ...oldSP, position: 0 });
+// 读取记忆并注入到 system prompt
+let memoryText = "";
+try {
+  const memData = JSON.parse(fs.readFileSync("./enhanced_messages.json", "utf8"));
+  const memRecord = memData.find(m => m.role === "system");
+  if (memRecord) {
+    const match = memRecord.content.match(/<memories>([\s\S]*?)<\/memories>/);
+    if (match) memoryText = "\n\n## 关于用户的记忆\n" + match[1].trim();
+  }
+} catch(e) {}
+
+if (latestSP) result.push({ ...latestSP, content: latestSP.content + memoryText, position: 0 });
+else if (oldSP) result.push({ ...oldSP, content: oldSP.content + memoryText, position: 0 });
 
   let realPos = 1;
   const finalMessages = [];

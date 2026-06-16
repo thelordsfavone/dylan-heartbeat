@@ -139,14 +139,9 @@ async function runWakeUp() {
   console.log("开始自动唤醒");
   console.log("==========================\n");
 
-  const messages = loadTimelineMessages();
-  if (!messages) return;
+const messages = loadTimelineMessages() || [];
 
-  const lastUserTime = getLastUserTime(messages);
-  if (!lastUserTime) {
-    console.log("未找到用户时间");
-    return;
-  }
+  const lastUserTime = getLastUserTime(messages) || new Date(Date.now() - 2 * 60 * 60 * 1000);
 
   const now = new Date();
   const diffMinutes = Math.floor((now - lastUserTime) / 1000 / 60);
@@ -197,9 +192,9 @@ async function runWakeUp() {
 最近记录：
 
 ${historyText}`
-    }
-  ];
-
+  },
+  { role: "user", content: "（系统触发：请决定是否发送Bark）" }
+];
   console.log("\n===== WAKE MESSAGES =====\n");
   console.log(JSON.stringify(wakeMessages, null, 2));
 
